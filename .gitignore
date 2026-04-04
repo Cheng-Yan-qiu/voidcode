@@ -19,3 +19,4 @@ htmlcov/
 .tox/
 .pre-commit-cache/
 .playwright-mcp/
+.coverage
