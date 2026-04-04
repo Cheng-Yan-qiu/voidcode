@@ -1,0 +1,28 @@
+# Python 3.14 is preferred for local development.
+# If 3.14 is unavailable on a machine, 3.13 or 3.12 are acceptable temporary fallbacks.
+
+[tools]
+python = "3.14"
+uv = "latest"
+
+[env]
+UV_PYTHON = "3.14"
+PYTHONPATH = "src"
+
+[tasks.lint]
+run = "uv run ruff check ."
+
+[tasks.format]
+run = "uv run ruff format ."
+
+[tasks.typecheck]
+run = "uv run mypy src"
+
+[tasks.test]
+run = "uv run pytest"
+
+[tasks.check]
+run = "mise run lint && mise run typecheck && mise run test"
+
+[tasks.pre-commit]
+run = "uv run pre-commit run --all-files"

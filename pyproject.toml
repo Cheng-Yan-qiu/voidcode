@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voidcode"
+version = "0.1.0"
+description = "Local-first coding agent runtime inspired by OpenCode and Claude Code"
+readme = "voidcode-architecture-v1.md"
+requires-python = ">=3.12,<3.15"
+license = { text = "MIT" }
+authors = [
+  { name = "VoidCode Contributors" },
+]
+keywords = ["agents", "cli", "langgraph", "local-first", "runtime"]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = [
+  "langchain-core",
+  "langgraph",
+  "pydantic",
+  "typing-extensions",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy",
+  "pre-commit",
+  "pytest",
+  "pytest-cov",
+  "ruff",
+]
+
+[project.scripts]
+voidcode = "voidcode.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ulw/voidcode"
+Repository = "https://github.com/ulw/voidcode"
+Documentation = "https://github.com/ulw/voidcode"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voidcode"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=src --cov-report=term-missing"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
