@@ -20,6 +20,38 @@ The MVP config surface should cover only these areas:
 - hook enablement/defaults
 - client-visible session settings needed for resume
 
+## Planned minimal config shape
+
+The MVP contract should be able to represent a runtime configuration object with at least:
+
+```json
+{
+  "workspace": "/workspace/project",
+  "model": "opencode/gpt-5.4",
+  "approval_mode": "ask",
+  "hooks": {
+    "enabled": true
+  }
+}
+```
+
+Field intent:
+
+- `workspace`: bootstrap field used to determine the runtime workspace root before repo-local config discovery, and then reused for tool execution and persistence
+- `model`: provider/model identifier in OpenCode `provider/model` format
+- `approval_mode`: minimum execution policy mode used by runtime-governed tools
+- `hooks`: minimal switch/config object for runtime hook behavior
+
+## Bootstrap rule for workspace
+
+`workspace` is not resolved by the same precedence ladder as normal runtime config fields.
+
+It must be determined first so the runtime can discover any repo-local config that lives under that workspace. In MVP terms:
+
+1. explicit runtime/bootstrap input chooses the workspace root
+2. repo-local config may then be discovered inside that workspace
+3. normal runtime config precedence applies to non-bootstrap fields such as `model`, `approval_mode`, and `hooks`
+
 ## Current code anchors
 
 - `VoidCodeRuntime(workspace=...)`
@@ -29,13 +61,31 @@ The MVP config surface should cover only these areas:
 
 ## Recommended precedence
 
-For MVP, config should resolve in this order:
+For MVP, non-bootstrap config fields should resolve in this order:
 
 1. explicit session override
 2. explicit client or CLI flag
 3. repo-local config file
 4. environment variables
 5. built-in defaults
+
+For resumed sessions, fresh explicit client or CLI input should be allowed to override persisted session settings where the runtime chooses to support overrideable fields. Persisted session settings are the baseline for resume, not an absolute override over fresh explicit input.
+
+## Planned session override shape
+
+Session-scoped overrides should be representable separately from repo defaults. The minimum override shape should support:
+
+```json
+{
+  "session_id": "session-123",
+  "overrides": {
+    "model": "opencode/gpt-5.4-pro",
+    "approval_mode": "ask"
+  }
+}
+```
+
+This is intentionally narrow: only settings that materially affect runtime behavior or resume semantics should be session-overridable in MVP.
 
 ## Session-persisted settings
 
@@ -45,6 +95,18 @@ Resume-critical settings should persist with the session, including at minimum:
 - approval mode
 - selected model/provider when relevant to deterministic resume behavior
 - any runtime mode that changes how the client should interpret the session
+
+## Current code mapping
+
+Current concrete storage/mapping points in the codebase are:
+
+- `VoidCodeRuntime(workspace=...)` supplies the active workspace root
+- `RuntimeRequest.metadata` is the current flexible request-scoped container
+- `SessionState.metadata` stores runtime/session metadata in memory
+- the SQLite session store persists `SessionState.metadata` as part of the stored session payload
+- the SQLite session store also persists `workspace` as a first-class column in `sessions.workspace`, and uses it for session listing and lookup
+
+Today, this means the config contract exists at the documentation level, while the concrete stable public config schema is still to be implemented.
 
 ## Invariants
 
@@ -70,3 +132,4 @@ Resume-critical settings should persist with the session, including at minimum:
 - a config doc exists that later implementation can follow directly
 - the persisted-session contract explicitly calls out which settings survive resume
 - config precedence is documented once and reused by TUI/web implementation work
+- the config doc includes a minimal concrete shape for repo/runtime defaults and session-level overrides
