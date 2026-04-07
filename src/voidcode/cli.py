@@ -1,19 +1,30 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Sequence
+import sys
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
 from . import __version__
+from .graph.contracts import GraphRunRequest
 from .runtime.config import load_runtime_config
-from .runtime.contracts import RuntimeRequest
-from .runtime.permission import PermissionDecision, PermissionResolution
+from .runtime.contracts import RuntimeRequest, RuntimeResponse, RuntimeStreamChunk
+from .runtime.events import EventEnvelope
+from .runtime.permission import PendingApproval, PermissionDecision, PermissionResolution
 from .runtime.service import VoidCodeRuntime
-from .runtime.session import StoredSessionSummary
+from .runtime.session import SessionState, StoredSessionSummary
 from .server import serve
+from .tools.contracts import ToolDefinition, ToolResult
 
 Handler = Callable[[argparse.Namespace], int]
+
+_SESSION_STORE_ATTR = "_session_store"
+_WORKSPACE_ATTR = "_workspace"
+_TOOL_REGISTRY_ATTR = "_tool_registry"
+_EXECUTE_GRAPH_LOOP_ATTR = "_execute_graph_loop"
+_PERSIST_RESPONSE_ATTR = "_persist_response"
+_REQUEST_ID_ATTR = "request_id"
 
 
 def _format_event(event_type: str, source: str, data: dict[str, object]) -> str:
@@ -31,24 +42,232 @@ def _handle_run_command(args: argparse.Namespace) -> int:
         approval_mode=cast(PermissionDecision | None, getattr(args, "approval_mode", None)),
     )
     runtime = VoidCodeRuntime(workspace=workspace, config=config)
-    result = runtime.run(
-        RuntimeRequest(prompt=request_text, session_id=cast(str | None, args.session_id))
+    request = RuntimeRequest(prompt=request_text, session_id=cast(str | None, args.session_id))
+    interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    output = _run_with_inline_approval(
+        runtime,
+        request,
+        interactive=interactive,
     )
 
-    _print_runtime_response(result)
+    if not interactive:
+        _print_runtime_output(output)
     return 0
 
 
-def _print_runtime_response(result: object) -> None:
+def _run_with_inline_approval(
+    runtime: VoidCodeRuntime,
+    request: RuntimeRequest,
+    *,
+    interactive: bool,
+) -> str | None:
+    output, final_session, last_event = _consume_runtime_stream(runtime.run_stream(request))
+
+    while interactive:
+        approval_event = _pending_approval_event(final_session, last_event)
+        if approval_event is None:
+            break
+        output, final_session, last_event = _consume_runtime_stream(
+            _resume_stream_with_inline_approval(
+                runtime,
+                session_id=final_session.session.id,
+                approval_request_id=_approval_request_id(approval_event),
+                approval_decision=_prompt_for_approval(approval_event),
+            )
+        )
+
+    if interactive:
+        _print_runtime_output(output)
+
+    return output
+
+
+def _consume_runtime_stream(
+    chunks: Iterator[RuntimeStreamChunk],
+) -> tuple[str | None, SessionState, EventEnvelope | None]:
+    output: str | None = None
+    final_session: SessionState | None = None
+    last_event: EventEnvelope | None = None
+
+    for chunk in chunks:
+        final_session = chunk.session
+        if chunk.event is not None:
+            print(
+                _format_event(chunk.event.event_type, chunk.event.source, chunk.event.payload),
+                flush=True,
+            )
+            last_event = chunk.event
+        if chunk.kind == "output":
+            output = chunk.output
+
+    if final_session is None:
+        raise ValueError("runtime stream emitted no chunks")
+
+    return output, final_session, last_event
+
+
+def _resume_stream_with_inline_approval(
+    runtime: VoidCodeRuntime,
+    *,
+    session_id: str,
+    approval_request_id: str,
+    approval_decision: PermissionResolution,
+) -> Iterator[RuntimeStreamChunk]:
+    session_store = cast(_SessionStoreLike, getattr(runtime, _SESSION_STORE_ATTR))
+    workspace = getattr(runtime, _WORKSPACE_ATTR)
+    tool_registry = cast(_ToolRegistryLike, getattr(runtime, _TOOL_REGISTRY_ATTR))
+    execute_graph_loop = cast(_ExecuteGraphLoopLike, getattr(runtime, _EXECUTE_GRAPH_LOOP_ATTR))
+    persist_response = cast(_PersistResponseLike, getattr(runtime, _PERSIST_RESPONSE_ATTR))
+
+    stored = session_store.load_session(workspace=workspace, session_id=session_id)
+    pending = session_store.load_pending_approval(workspace=workspace, session_id=session_id)
+    if pending is None:
+        raise ValueError(f"no pending approval for session: {session_id}")
+    if getattr(pending, _REQUEST_ID_ATTR) != approval_request_id:
+        raise ValueError("approval request id does not match pending session approval")
+
+    session = SessionState(
+        session=stored.session.session,
+        status="running",
+        turn=stored.session.turn,
+        metadata=stored.session.metadata,
+    )
+
+    sequence_before_turn = 1
+    for event in reversed(stored.events):
+        if event.event_type in ("runtime.tool_completed", "runtime.skills_loaded"):
+            sequence_before_turn = event.sequence
+            break
+
+    max_stored_sequence = stored.events[-1].sequence if stored.events else 0
+
+    tool_results: list[ToolResult] = []
+    for event in stored.events:
+        if event.event_type == "runtime.tool_completed":
+            is_err = "error" in event.payload
+            tool_results.append(
+                ToolResult(
+                    tool_name=str(event.payload.get("tool", "unknown")),
+                    content=str(event.payload.get("content", "")) if not is_err else None,
+                    status="error" if is_err else "ok",
+                    data=event.payload,
+                    error=str(event.payload["error"]) if is_err else None,
+                )
+            )
+
+    graph_request = GraphRunRequest(
+        session=session,
+        prompt=_prompt_from_events(stored.events),
+        available_tools=tool_registry.definitions(),
+        metadata=session.metadata,
+    )
+
+    loop_events: list[EventEnvelope] = []
+    output: str | None = None
+    has_completed_tool = False
+
+    try:
+        for chunk in execute_graph_loop(
+            session=session,
+            sequence=sequence_before_turn,
+            graph_request=graph_request,
+            tool_results=tool_results,
+            approval_resolution=(pending, approval_decision),
+        ):
+            if chunk.event is not None:
+                if chunk.event.event_type == "runtime.tool_completed":
+                    has_completed_tool = True
+                if chunk.event.sequence > max_stored_sequence:
+                    loop_events.append(chunk.event)
+                    yield chunk
+            if chunk.kind == "output":
+                output = chunk.output
+                yield chunk
+            session = chunk.session
+    except Exception:
+        if session.status == "failed" and not has_completed_tool:
+            response = RuntimeResponse(
+                session=session,
+                events=stored.events + tuple(loop_events),
+                output=output,
+            )
+            request = RuntimeRequest(
+                prompt=_prompt_from_events(stored.events), session_id=session_id
+            )
+            persist_response(request=request, response=response)
+            return
+        raise
+
+    response = RuntimeResponse(
+        session=session,
+        events=stored.events + tuple(loop_events),
+        output=output,
+    )
+    request = RuntimeRequest(prompt=_prompt_from_events(stored.events), session_id=session_id)
+    persist_response(request=request, response=response)
+
+
+def _prompt_from_events(events: tuple[EventEnvelope, ...]) -> str:
+    if not events:
+        return ""
+    prompt = events[0].payload.get("prompt")
+    if isinstance(prompt, str):
+        return prompt
+    return ""
+
+
+def _pending_approval_event(
+    session: SessionState,
+    event: EventEnvelope | None,
+) -> EventEnvelope | None:
+    if session.status != "waiting":
+        return None
+    if event is None or event.event_type != "runtime.approval_requested":
+        return None
+    return event
+
+
+def _approval_request_id(event: EventEnvelope) -> str:
+    return str(event.payload["request_id"])
+
+
+def _prompt_for_approval(event: EventEnvelope) -> PermissionResolution:
+    tool = str(event.payload["tool"])
+    target_summary = event.payload.get("target_summary")
+    if isinstance(target_summary, str) and target_summary:
+        prompt = f"Approve {tool} for {target_summary}? [y/N]: "
+    else:
+        prompt = f"Approve {tool}? [y/N]: "
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    response = sys.stdin.readline()
+    normalized = response.strip().lower()
+    if normalized in {"y", "yes"}:
+        return "allow"
+    return "deny"
+
+
+def _print_runtime_response(
+    result: object,
+    *,
+    event_offset: int = 0,
+    include_result: bool = True,
+) -> int:
     typed_result = cast("RuntimeResponseLike", result)
 
-    for event in typed_result.events:
-        print(_format_event(event.event_type, event.source, event.payload))
+    for event in typed_result.events[event_offset:]:
+        print(_format_event(event.event_type, event.source, event.payload), flush=True)
 
-    print("RESULT")
-    print(typed_result.output or "", end="")
-    if typed_result.output and not typed_result.output.endswith("\n"):
-        print()
+    if include_result:
+        _print_runtime_output(typed_result.output)
+    return len(typed_result.events)
+
+
+def _print_runtime_output(output: str | None) -> None:
+    print("RESULT", flush=True)
+    print(output or "", end="", flush=True)
+    if output and not output.endswith("\n"):
+        print(flush=True)
 
 
 def _handle_sessions_list_command(args: argparse.Namespace) -> int:
@@ -112,7 +331,35 @@ class RuntimeResponseLike(Protocol):
     events: tuple[EventLikeProtocol, ...]
     output: str | None
 
-    session: object
+    session: SessionState
+
+
+class _SessionStoreLike(Protocol):
+    def load_session(self, *, workspace: Path, session_id: str) -> RuntimeResponse: ...
+
+    def load_pending_approval(
+        self, *, workspace: Path, session_id: str
+    ) -> PendingApproval | None: ...
+
+
+class _ToolRegistryLike(Protocol):
+    def definitions(self) -> tuple[ToolDefinition, ...]: ...
+
+
+class _ExecuteGraphLoopLike(Protocol):
+    def __call__(
+        self,
+        *,
+        session: SessionState,
+        sequence: int,
+        graph_request: GraphRunRequest,
+        tool_results: list[ToolResult],
+        approval_resolution: tuple[PendingApproval, PermissionResolution] | None = None,
+    ) -> Iterator[RuntimeStreamChunk]: ...
+
+
+class _PersistResponseLike(Protocol):
+    def __call__(self, *, request: RuntimeRequest, response: RuntimeResponse) -> None: ...
 
 
 def build_parser() -> argparse.ArgumentParser:
