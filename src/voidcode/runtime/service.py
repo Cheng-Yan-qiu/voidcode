@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from ..graph.contracts import GraphEvent, GraphRunRequest
 from ..graph.read_only_slice import DeterministicReadOnlyGraph
+from ..graph.single_agent_slice import ProviderSingleAgentGraph
 from ..tools.contracts import Tool, ToolCall, ToolDefinition, ToolResult
 from .acp import DisabledAcpAdapter
 from .config import ExecutionEngineName, RuntimeConfig, load_runtime_config
@@ -91,6 +92,7 @@ class VoidCodeRuntime:
     _workspace: Path
     _tool_registry: ToolRegistry
     _graph: RuntimeGraph
+    _graph_override: RuntimeGraph | None
     _config: RuntimeConfig
     _permission_policy: PermissionPolicy
     _session_store: SessionStore
@@ -99,6 +101,7 @@ class VoidCodeRuntime:
     _skill_registry: SkillRegistry
     _lsp_manager: DisabledLspManager
     _acp_adapter: DisabledAcpAdapter
+    _graph_cache: dict[tuple[ExecutionEngineName, str], RuntimeGraph]
     _hook_recursion_env_var = "VOIDCODE_RUNNING_TOOL_HOOK"
 
     def __init__(
@@ -117,14 +120,22 @@ class VoidCodeRuntime:
     ) -> None:
         self._workspace = workspace.resolve()
         self._config = config or load_runtime_config(self._workspace)
-        self._tool_registry = tool_registry or ToolRegistry.with_defaults()
-        self._graph = graph or self._build_graph_for_engine(self._config.execution_engine)
         self._model_provider_registry = (
             model_provider_registry or ModelProviderRegistry.with_defaults()
         )
         self._provider_model = resolve_provider_model(
             self._config.model,
             registry=self._model_provider_registry,
+        )
+        self._tool_registry = tool_registry or ToolRegistry.with_defaults()
+        self._graph_override = graph
+        self._graph_cache = {}
+        self._graph = graph or self._build_graph_for_engine_from_config(
+            EffectiveRuntimeConfig(
+                approval_mode=self._config.approval_mode,
+                model=self._config.model,
+                execution_engine=self._config.execution_engine,
+            )
         )
         self._permission_policy = permission_policy or PermissionPolicy(
             mode=self._config.approval_mode
@@ -135,10 +146,39 @@ class VoidCodeRuntime:
         self._acp_adapter = acp_adapter or DisabledAcpAdapter(self._config.acp)
 
     @staticmethod
-    def _build_graph_for_engine(engine_name: ExecutionEngineName) -> RuntimeGraph:
+    def _build_graph_for_engine(
+        engine_name: ExecutionEngineName,
+        provider_model: ResolvedProviderModel,
+    ) -> RuntimeGraph:
         if engine_name == "deterministic":
             return DeterministicReadOnlyGraph()
+        if engine_name == "single_agent":
+            if provider_model.provider is None:
+                raise ValueError("single_agent execution engine requires a configured model")
+            return ProviderSingleAgentGraph(
+                provider=provider_model.provider.single_agent_provider(),
+                provider_model=provider_model,
+            )
         raise ValueError(f"unknown execution engine: {engine_name}")
+
+    def _build_graph_for_engine_from_config(self, config: EffectiveRuntimeConfig) -> RuntimeGraph:
+        # Generate cache key from config
+        model_str = config.model if config.model is not None else ""
+        cache_key = (config.execution_engine, model_str)
+
+        # Check cache first
+        if cache_key in self._graph_cache:
+            return self._graph_cache[cache_key]
+
+        # Build new graph and cache it
+        provider_model = resolve_provider_model(
+            config.model,
+            registry=self._model_provider_registry,
+        )
+        self._provider_model = provider_model
+        graph = self._build_graph_for_engine(config.execution_engine, provider_model)
+        self._graph_cache[cache_key] = graph
+        return graph
 
     def _build_skill_registry(self) -> SkillRegistry:
         skills_config = self._config.skills
@@ -247,8 +287,10 @@ class VoidCodeRuntime:
             metadata=request.metadata,
         )
         tool_results: list[ToolResult] = []
+        graph = self._graph_for_session_metadata(session.metadata)
 
         yield from self._execute_graph_loop(
+            graph=graph,
             session=session,
             sequence=sequence,
             graph_request=graph_request,
@@ -259,6 +301,7 @@ class VoidCodeRuntime:
     def _execute_graph_loop(
         self,
         *,
+        graph: RuntimeGraph,
         session: SessionState,
         sequence: int,
         graph_request: GraphRunRequest,
@@ -269,7 +312,7 @@ class VoidCodeRuntime:
         active_permission_policy = permission_policy or self._permission_policy
         while True:
             try:
-                graph_step = self._graph.step(
+                graph_step = graph.step(
                     graph_request,
                     tool_results=tuple(tool_results),
                     session=session,
@@ -843,11 +886,13 @@ class VoidCodeRuntime:
             available_tools=self._tool_registry.definitions(),
             metadata=session.metadata,
         )
+        graph = self._graph_for_session_metadata(session.metadata)
 
         loop_events: list[EventEnvelope] = []
         output: str | None = None
         try:
             for chunk in self._execute_graph_loop(
+                graph=graph,
                 session=session,
                 sequence=sequence_before_turn,
                 graph_request=graph_request,
@@ -1035,13 +1080,29 @@ class VoidCodeRuntime:
         if persisted_model is None or isinstance(persisted_model, str):
             model = persisted_model
         persisted_execution_engine = runtime_config.get("execution_engine")
-        if persisted_execution_engine == "deterministic":
-            execution_engine = cast(ExecutionEngineName, persisted_execution_engine)
+        if persisted_execution_engine in ("deterministic", "single_agent"):
+            execution_engine = persisted_execution_engine
         return EffectiveRuntimeConfig(
             approval_mode=approval_mode,
             model=model,
             execution_engine=execution_engine,
         )
+
+    def _graph_for_session_metadata(self, metadata: dict[str, object] | None) -> RuntimeGraph:
+        if self._graph_override is not None:
+            return self._graph_override
+
+        effective_config = self._effective_runtime_config_from_metadata(metadata)
+
+        # Reuse self._graph if the session's config matches the runtime's config
+        if (
+            effective_config.execution_engine == self._config.execution_engine
+            and effective_config.model == self._config.model
+        ):
+            return self._graph
+
+        # Otherwise use cached graph or build new one
+        return self._build_graph_for_engine_from_config(effective_config)
 
     def _validate_session_workspace(self, session: SessionState, *, session_id: str) -> None:
         session_workspace = session.metadata.get("workspace")
