@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import sys
 from importlib import import_module
-from pathlib import Path
 from typing import Any
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 from voidcode.runtime.config import RuntimeAcpConfig
 

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, asdict
-from pathlib import Path
 from types import ModuleType
 from typing import Any, get_type_hints
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 import pytest
 
