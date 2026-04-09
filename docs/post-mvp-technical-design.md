@@ -1,0 +1,499 @@
+# VoidCode Post-MVP 技术设计
+
+## 文档状态
+
+本文档定义 VoidCode 在 MVP 基线之后进入 WIP 阶段的目标技术设计。
+
+它不是一份脱离现有代码的“重做方案”，而是建立在当前仓库已经交付的真实边界之上：
+
+- `runtime/` 仍是产品级执行边界
+- `graph/` 仍负责编排，而不是承载产品逻辑
+- `tools/` 仍通过运行时统一治理
+- CLI / HTTP / Web / 后续 TUI 仍通过运行时契约消费执行与会话状态
+
+本文档位于 `docs/current-state.md` 与 `docs/contracts/` 之间：
+
+- `docs/current-state.md` 描述**现在已经实现了什么**
+- `docs/roadmap.md` 描述**阶段性方向**
+- `docs/contracts/` 定义**稳定的客户端契约和 schema**
+- 本文档描述**从当前基线演进到 post-MVP/WIP 架构的技术路线与模块设计**
+
+## 设计目标
+
+进入 WIP 阶段之后，VoidCode 的目标不再只是“有一个稳定可演示的确定性单智能体循环”，而是向一个**本地优先、运行时中心、可恢复、可扩展**的真实 coding agent runtime 演进。
+
+本阶段的设计目标是：
+
+1. 保持当前运行时边界稳定，不推倒重来。
+2. 在现有运行时内部引入一个**真实的、可恢复的、provider-backed 单智能体执行路径**。
+3. 将 skill、LSP、ACP、provider 这些现在还停留在发现/配置/存根层的能力，提升为运行时可管理的能力面。
+4. 继续强化本地持久化、事件流、审批与恢复，而不是让客户端承担执行状态。
+5. 为后续可能出现的 subagent / ACP 控制面预留边界，但不把多智能体作为当前 WIP 的前置条件。
+
+## 非目标
+
+本阶段**不**包含以下内容：
+
+- 不重写为新的 monorepo 或 Node/Bun 主体架构。
+- 不绕过 `VoidCodeRuntime` 让客户端直接调用工具。
+- 不立即把系统扩展成真实多智能体平台。
+- 不引入云同步、托管协作、插件市场或大规模 IDE 生态。
+- 不围绕尚未落地的 UI 愿景重新定义后端边界。
+- 不在本文件中重复定义 `docs/contracts/` 已拥有的 schema 细节。
+
+## 当前基线
+
+当前仓库已经具备清晰的 MVP 基线，这些现实约束决定了 post-MVP 设计必须如何展开。
+
+### 已稳定的部分
+
+- `src/voidcode/runtime/service.py` 已经是明确的产品级运行时边界。
+- 运行时已经拥有：
+  - 请求/响应与流式输出
+  - 工具注册与统一执行管线
+  - 权限决策与审批恢复
+  - hooks 执行
+  - SQLite 会话持久化与恢复
+  - HTTP 传输
+  - skill discovery
+- CLI 与 Web 已经消费统一的运行时边界；TUI 仍不完整，但方向一致。
+- 事件流已经是系统的关键观测面，并支持恢复/重放。
+
+### 仍然偏 MVP / 存根的部分
+
+- `src/voidcode/graph/read_only_slice.py` 仍是一个小型的确定性解析式循环。
+- skill 目前只有发现，没有真正的执行语义。
+- LSP / ACP 目前是类型化配置载体和 disabled stub。
+- provider/model 抽象仍然很窄，尚未形成真实执行引擎的统一入口。
+- 前端和 TUI 仍然主要在“消费已有 runtime path”，还没有形成更成熟的产品交互层。
+
+### 基线结论
+
+因此，post-MVP 的第一步不应该是“增加更多表面”，而应该是：
+
+1. 保持当前 runtime 为稳定控制面。
+2. 在 runtime 内部增加一个新的真实 agent execution engine。
+3. 让 provider、skill、LSP、ACP 都继续沿着 runtime-managed capability 的方向落地。
+
+## 固定架构不变量
+
+以下设计约束在 WIP 阶段默认保持不变，除非未来专门通过架构决策文档推翻。
+
+### 1. Runtime 是系统控制平面
+
+`VoidCodeRuntime` 是产品边界，而不是可有可无的适配层。所有执行、事件、审批、持久化和恢复都必须经过它。
+
+### 2. Graph 负责编排，不负责产品治理
+
+Graph 可以演进为更真实的 agent loop，但权限、hooks、工具治理、持久化、配置优先级和客户端传输，仍由 runtime 负责。
+
+### 3. 客户端不直接调用工具
+
+CLI、Web、TUI、后续可能的 IDE client 都只能消费 runtime contracts、runtime events 和 session state，不能形成各自独立的执行路径。
+
+### 4. 本地持久化是运行历史的真相来源
+
+`.voidcode/` 下的本地状态（尤其是 SQLite session store）继续作为运行历史、审批状态和恢复检查点的权威来源。客户端缓存只能作为渲染加速层，不能成为真相源。
+
+### 5. 配置优先级必须集中且确定
+
+所有 provider、engine、tool、skill、LSP、ACP 的运行时行为都必须消费 runtime 解析后的配置结果，而不是自行解析来自 CLI、环境变量或客户端输入的原始值。
+
+### 6. 事件流必须可重放、可恢复、可演进
+
+运行时事件继续承担观测、客户端渲染和恢复的三重职责。任何事件扩展都必须保持顺序稳定、语义明确，并尽量兼容已有消费方。
+
+## OpenCode 参考后的目标形态
+
+OpenCode 提供了几个值得借鉴的成熟模式：本地优先 session truth、transport 与 client 分离、typed event flow、provider abstraction、以及 ACP / agent role 的控制面思路。
+
+对 VoidCode 而言，正确的吸收方式不是复制实现语言或仓库结构，而是将这些模式映射到现有 Python runtime 边界中。
+
+### 应保留的核心形态
+
+- **Local-first**：所有关键运行状态仍优先保存在本地。
+- **Thin clients**：CLI / Web / TUI 是 runtime 的消费者，而不是执行中心。
+- **Typed events**：事件词汇表是客户端与恢复逻辑共享的稳定协议。
+- **Config layering**：配置优先级必须统一管理。
+- **Control-plane mindset**：agent execution、tool execution、approval、resume 应由 runtime 控制。
+
+### 不直接照搬的部分
+
+- 不引入基于 Node/Bun 的整体重构。
+- 不立即把 agent/subagent 关系产品化。
+- 不在当前阶段拆出独立本地 daemon，除非未来出现多客户端并发附着或运行脱离调用进程的明确需求。
+
+## 目标运行时模型
+
+Post-MVP 的目标不是“一个更复杂的 graph”，而是“一个更完整的 runtime-managed execution model”。
+
+### 逻辑分层
+
+目标分层如下：
+
+1. **Clients**
+   - CLI
+   - HTTP/SSE transport
+   - Web frontend
+   - TUI
+
+2. **Runtime boundary**
+   - run / stream / resume 入口
+   - session persistence
+   - event emission
+   - config resolution
+   - permission / approval
+   - hooks
+   - capability registry and lifecycle
+
+3. **Execution engines**
+   - `DeterministicReadOnlyGraph` 继续作为 reference engine
+   - 新增一个 provider-backed single-agent engine，作为首个真实 WIP engine
+
+4. **Managed capabilities**
+   - tool providers
+   - skill execution
+   - provider/model abstraction
+   - LSP lifecycle
+   - ACP lifecycle
+
+5. **Persistence and contracts**
+   - SQLite session truth
+   - runtime events
+   - client-facing runtime contracts
+
+### 关键变化
+
+最关键的变化是：runtime 不再只驱动“确定性工具循环”，而是能够在同一个治理边界内管理多个 execution engine，并把它们都接到统一的工具、审批、事件和恢复管线中。
+
+这使得系统能够在不破坏已有客户端和 session 语义的前提下，从 MVP 的 deterministic engine 演进到真实 agent execution。
+
+## 关键能力面设计
+
+### 1. Execution Engine 抽象
+
+当前 `graph/read_only_slice.py` 更像一个“参考实现”。WIP 之后，运行时应显式支持 engine selection。
+
+建议抽象：
+
+- `deterministic`：当前 deterministic parser/graph engine
+- `agent`：新的 provider-backed single-agent execution engine
+
+运行时负责：
+
+- 选择 engine
+- 为 engine 提供 resolved config、session state、tool metadata
+- 接收 engine 产出的 step / event / tool intent
+- 通过 runtime-owned permission + tool pipeline 执行实际副作用
+
+这样可以保证：即使 execution engine 更真实、更复杂，工具调用与审批恢复的治理仍然完全一致。
+
+### 2. Provider / Model 抽象
+
+Post-MVP 必须把 model invocation 从 ad-hoc config carrier 提升为运行时内部的明确能力边界。
+
+该抽象的职责应仅限于：
+
+- provider 选择
+- model 选择
+- provider capability 描述
+- 推理调用与流式结果适配
+
+它**不**负责：
+
+- 工具执行
+- session persistence
+- approval / permission
+- hooks
+- 客户端 transport
+
+换句话说，provider abstraction 是 runtime 的一个子系统，而不是新的系统中心。
+
+### 3. Skill Execution
+
+当前 skill 只有 discovery，下一阶段最值得优先落地的是 runtime-managed skill execution。
+
+目标方向：
+
+- runtime 发现 skill
+- runtime 决定当前 run 中哪些 skill 被启用
+- engine 在规划时能看到 skill 提供的上下文/约束
+- skill 的执行或注入过程由 runtime 记录事件并持久化必要元数据
+
+这一能力可以先限定在单智能体路径中完成，不要求同时引入 subagent。
+
+### 4. LSP 作为运行时管理能力
+
+LSP 不应只是配置占位符，而应成为 runtime 可启停、可观测、可注入给 engine/tool 的能力面。
+
+第一阶段不需要完成完整的 IDE 级 LSP 体验，但应明确：
+
+- 生命周期由 runtime 管理
+- 配置由 runtime 统一解析
+- tool / engine 通过 runtime 请求 LSP 能力
+- LSP 相关事件进入统一事件流
+
+### 5. ACP 作为未来控制面能力
+
+ACP 在当前阶段不应被理解为“必须马上做多智能体”。更合理的定位是：
+
+- 先作为 runtime 内的受管控制面能力保留接口
+- 后续可用于内部 agent role 隔离、外部代理连接或更强的生命周期管理
+- 是否独立为本地 daemon，取决于多进程/多客户端附着需求是否真实出现
+
+换句话说，ACP 是边界预留，不是当前 WIP 的首要交付物。
+
+### 6. Typed Runtime Event Protocol
+
+事件系统需要从“当前 MVP 已够用的事件流”演进到更稳定的 runtime protocol。
+
+在语义层面，post-MVP 事件至少应覆盖：
+
+- run started / resumed
+- assistant output delta / finalized output
+- tool planned
+- permission resolved
+- approval requested / resolved
+- tool started / completed / failed
+- skill loaded / skill applied
+- provider selected / provider failed
+- checkpoint persisted
+- run completed / failed
+
+具体 schema 应在稳定后下沉到 `docs/contracts/`，而不是在本文件中直接定稿。
+
+### 7. Client Parity
+
+客户端继续沿“统一 runtime truth”推进：
+
+- CLI 作为最强参考客户端
+- Web 继续建立在真实 runtime transport 之上
+- TUI 追平同一套 session / event / approval 语义
+
+任何客户端增强都应建立在 runtime event 和 runtime session 语义已经稳定的前提下。
+
+## 配置模型与优先级
+
+WIP 之后，配置不应继续由各子模块分别解释，而应进一步集中到 runtime resolution。
+
+建议优先级顺序：
+
+1. runtime internal defaults
+2. user config
+3. project config
+4. environment overrides
+5. request / CLI overrides
+
+所有 execution engine、provider、skill、LSP、ACP 子系统都应消费 resolved config，而不是重复解释原始输入。
+
+这样能确保：
+
+- session resume 时行为稳定
+- 客户端之间的行为一致
+- 测试可以覆盖确定性的 precedence 行为
+
+## 会话、恢复与检查点
+
+进入真实 agent execution 后，session persistence 不能只存“最终结果和少量事件”，而必须继续强化为可恢复的运行历史。
+
+关键要求：
+
+- SQLite 仍为 canonical session store
+- approval interrupt 后可恢复
+- transport 中断后可重放
+- engine 状态至少要持久化到足以恢复 run 的粒度
+- 客户端不负责重建真实执行状态
+
+对当前架构的直接要求是：新的 provider-backed engine 必须重用现有 session / event / approval / resume 机制，而不是建立自己的旁路状态。
+
+## WIP 实施波次
+
+### Wave 0：锁定不变量并补齐设计入口
+
+目标：明确 post-MVP 的边界与首个实施切片。
+
+工作内容：
+
+- 新增本技术设计文档
+- 明确 runtime 仍为控制平面
+- 明确 deterministic engine 保留为 reference path
+- 明确多智能体、云协作、插件市场不进入 immediate WIP
+
+完成信号：
+
+- 团队对 post-MVP 目标架构有共享理解
+- 后续 issue / PR 能引用统一设计文档
+
+### Wave 1：Provider-backed Single-Agent Engine
+
+这是 post-MVP 的**最高优先级 WIP 切片**。
+
+目标：在现有 runtime 边界内部，新增一个真实的单智能体执行路径。
+
+工作内容：
+
+- 引入 execution engine 选择机制
+- 保留 deterministic engine
+- 新增 agent engine
+- 为 agent engine 接入 provider/model abstraction
+- 复用 runtime-owned tool registry、permission、approval、hooks、session persistence 和 HTTP/CLI/Web transport
+
+完成信号：
+
+- 一个真实的单智能体 run 可以在 provider 支撑下完成
+- 工具调用仍通过 runtime 治理
+- 审批与恢复保持成立
+- session replay 仍然可用
+
+### Wave 2：Skill Execution 落地
+
+目标：从 skill discovery 过渡到 skill execution。
+
+工作内容：
+
+- 定义 skill 在运行时中的启用与注入语义
+- 将 skill 相关事件纳入 runtime event flow
+- 让 agent engine 能消费 skill 提供的上下文或能力面
+
+完成信号：
+
+- skill 不再只是发现结果，而是影响真实执行行为
+- skill 生命周期可观测、可测试、可恢复
+
+### Wave 3：LSP / ACP Managed Capability 化
+
+目标：把当前 carrier/stub 变成受 runtime 管理的可启停能力。
+
+工作内容：
+
+- LSP 生命周期管理
+- ACP 生命周期管理
+- 对 tool / engine 暴露统一访问接口
+- 增补必要事件与配置开关
+
+完成信号：
+
+- LSP / ACP 不再只是配置结构
+- 启用/禁用行为、失败行为与事件记录可验证
+
+### Wave 4：Client Parity 加固
+
+目标：让 CLI / Web / TUI 对同一套 runtime truth 拥有更高一致性。
+
+工作内容：
+
+- 补齐 TUI 对会话、恢复和审批语义的消费
+- 强化 Web 对 richer runtime events 的渲染
+- 保持 CLI 为 reference client
+
+完成信号：
+
+- 多客户端消费统一 session / event truth
+- 新能力不会只在单一客户端成立
+
+## Immediate WIP 定义
+
+如果只定义一个“现在立刻进入 WIP 的首批工作面”，建议范围严格限定为：
+
+### WIP-1：单智能体真实执行闭环
+
+必须完成：
+
+- runtime 内的 engine selection
+- 一个 provider-backed single-agent engine
+- provider 抽象的最小闭环
+- 基于现有 runtime pipeline 的工具执行、审批、恢复、持久化
+- 对应的事件扩展与测试
+
+明确不做：
+
+- 多智能体调度
+- subagent 产品化
+- 独立 daemon 化
+- 云端协作
+- 大范围 UI 重写
+
+这是当前阶段杠杆最高的一步，因为它会把仓库从“稳定 deterministic MVP”推进到“真实可扩展 agent runtime”，同时又不破坏当前边界。
+
+## 验证与测试矩阵
+
+每个实施波次都应遵循 contract-first / runtime-first 的验证方式。
+
+### 1. 契约层
+
+- 若事件、传输或配置语义变稳定，则更新 `docs/contracts/`
+- 本技术设计文档只描述演进方向，不取代 schema 文档
+
+### 2. 单元测试
+
+优先覆盖：
+
+- provider resolution
+- config precedence
+- skill loading / skill enablement
+- LSP / ACP enablement guards
+- event translation / normalization
+
+### 3. 集成测试
+
+优先覆盖：
+
+- runtime run / stream / resume 主路径
+- approval continuity
+- session persistence
+- richer engine 下的 event ordering
+- provider failure / recovery path
+
+### 4. 客户端冒烟测试
+
+- CLI 继续作为 reference smoke path
+- Web 验证 session replay、runtime event 渲染、approval handling
+- TUI 在进入对应 wave 后验证相同语义
+
+### 5. 手动 QA
+
+每个新 capability 都必须进行实际运行验证，而不是只通过类型检查或单元测试判断完成。
+
+## 风险与开放问题
+
+### 1. Skill execution 与 subagent 的先后顺序
+
+建议先完成 skill execution，再决定是否需要 subagent role。否则系统会在最基础的运行时能力还未落地时就被拉向更高复杂度。
+
+### 2. ACP 是否需要独立 daemon 化
+
+当前不需要预设为 daemon。只有在出现多个客户端/进程同时附着同一 live run，或运行必须脱离调用进程长期存活时，才值得将 runtime 提升为独立本地服务进程。
+
+### 3. Event vocabulary 的扩展节奏
+
+事件扩展过快会让客户端和恢复逻辑反复震荡；因此建议先稳定运行时语义，再把稳定部分正式写入 contract docs。
+
+### 4. Provider abstraction 边界膨胀
+
+必须防止 provider 层吞掉工具、session、permission 或 transport 职责。否则 runtime 将失去作为系统控制面的价值。
+
+## 建议的后续 issue 方向
+
+本文档完成后，建议将 WIP 拆成以下实现向 issue：
+
+1. execution engine abstraction
+2. provider/model runtime abstraction
+3. provider-backed single-agent engine
+4. runtime event protocol expansion
+5. skill execution semantics
+6. managed LSP lifecycle
+7. managed ACP lifecycle
+8. TUI parity against runtime sessions/events
+
+## 总结
+
+VoidCode 的 post-MVP 演进应当围绕一个核心原则展开：**强化 runtime 作为本地优先 coding agent control plane 的地位，而不是增加更多绕开它的执行表面。**
+
+这意味着下一阶段最值得做的不是多智能体平台化，而是：
+
+- 保留 deterministic engine 作为 reference path
+- 新增一个真实的 provider-backed single-agent engine
+- 让 skill、LSP、ACP、provider 都通过 runtime-managed capability 的方式逐步落地
+- 继续把 session、event、approval 和 resume 保持为统一真相源
+
+这就是 VoidCode 从 MVP 进入 WIP 的正确起点。
