@@ -75,7 +75,7 @@ VoidCode 仍处于 pre-MVP 开发阶段。路线图从基础工作贯穿至 MVP 
 
 管理长期运行的上下文，并提供对轮次、工具、审批、钩子和错误的追踪友好可见性。
 
-**当前状态：** 部分完成。通过事件流实现的轮次级可观测性已完成；长期运行的上下文管理仍在演进中。
+**当前状态：** 部分完成。通过事件流实现的轮次级可观测性已完成；provider fallback、step budget 与恢复关键配置的运行时治理已经落地。当前最直接的后续工作是定义 event retention 与 long-session checkpoint 策略，以保证 replay / resume / 长期恢复在会话规模增长后仍然成立。
 
 ### Epic 8: TUI / CLI / Web 客户端
 
@@ -97,3 +97,13 @@ VoidCode 仍处于 pre-MVP 开发阶段。路线图从基础工作贯穿至 MVP 
 ## MVP 完成信号
 
 当 VoidCode 能够可靠地演示一个受监管的单智能体开发任务流，并具备持久化、审批、可观测性，以及至少一个经过真实验证的客户端入口点时，即认为达到了 MVP 边界。
+
+## 当前最直接的后续工作
+
+在最近几轮 runtime 配置、provider fallback 和恢复语义收口之后，当前 backlog 中最直接的 runtime/platform follow-up 是：
+
+- 定义 event retention 策略
+- 明确 long-session checkpoint / compaction 的持久化语义
+- 保证 transport replay、approval resume 与长期恢复在该策略下继续成立
+
+这项工作对应当前 open issue：[#70 定义 event retention 与 long-session checkpoint 策略](https://github.com/lei-jia-xing/voidcode/issues/70)。
