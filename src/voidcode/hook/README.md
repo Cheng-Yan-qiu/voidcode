@@ -1,0 +1,27 @@
+# `voidcode.hook`
+
+这里是 VoidCode 的 hook 能力层。
+
+## 定位
+
+`voidcode.hook` 承载 hook 配置与执行器逻辑，为 runtime 提供一致的 pre/post execution 扩展点。
+
+## 负责什么
+
+- hook 配置模型
+- hook 执行器与执行协议
+- 与格式化 preset 相关的 hook 支撑逻辑
+
+## 不负责什么
+
+- session 生命周期管理
+- 客户端事件协议设计
+- tool/provider/skill 的具体业务语义
+
+## 边界关系
+
+runtime 负责决定何时执行 hook、如何把 hook 纳入审批/恢复语义；`voidcode.hook` 负责提供可复用的 hook primitives 与执行能力。
+
+## 当前状态
+
+hook 已经是相对独立的能力层，是后续 capability-layer 文档化的参考样板之一。
