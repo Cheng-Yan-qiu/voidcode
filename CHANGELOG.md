@@ -8,3 +8,4 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Clarified the current deterministic backend slice, mock-backed frontend status, and pre-MVP release posture across contributor-facing docs.
+- Synced checkpoint retention/invalidation documentation status after issue #82 was completed.

@@ -40,7 +40,7 @@
 - [x] **Provider-backed 单智能体路径**：运行时已经具备 provider fallback、context window 管理、approval resume 连续性与可配置 step budget 的运行时治理基础。
 - [ ] **技能执行**：skill discovery 与 `runtime.skills_loaded` 事件已经完成，但运行时仍未执行技能逻辑，也尚未提供特定于技能的工具上下文。
 - [ ] **LSP preset/config 模块与 ACP 真实集成**：LSP 的只读 runtime-managed 基线已经存在，且 `src/voidcode/lsp/`、`src/voidcode/acp/` 等能力层边界目录已补齐文档，但仍缺少独立的 server preset/config 模块（extension/language 映射、root markers、默认 command、preset override merge）；ACP 也仍待真实传输与生命周期集成。
-- [ ] **长会话保留策略**：`#70` 已完成 waiting / terminal session 的内部 resume checkpoint groundwork；当前 runtime 主线的直接后续工作是 `#82`，用于定义 retention / compaction / checkpoint invalidation 语义。`#83` 另行跟踪 corrupt / unreadable checkpoint 的 fallback correctness，`#84` 再继续承接 cold-session archive / replay 策略。
+- [ ] **长会话保留策略**：`#70` 已完成 waiting / terminal session 的内部 resume checkpoint groundwork，`#82` 也已经完成 retention / compaction / checkpoint invalidation 语义定义；当前 runtime 主线的直接后续工作转为 `#83`（corrupt / unreadable checkpoint fallback correctness）和 `#84`（cold-session archive / replay strategy）。
 - [~] **TUI 客户端**：已具备提示词输入和审批处理的初始实现，但会话管理、恢复/重放与规范冒烟验证仍未收口，当前优先级也已下调。
 - [x] **Web 客户端集成**：已接入真实的会话列表、会话重放、流式运行和审批处理路径，并具备真实 store/client 闭环验证。
 
