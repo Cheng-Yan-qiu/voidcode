@@ -200,6 +200,36 @@ def test_apply_patch_reports_mode_only_change_for_path_with_spaces(tmp_path: Pat
     assert result.content == "M space name.sh"
 
 
+def test_apply_patch_ignores_broken_unidiff_paths_from_quoted_diff_header(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    target = tmp_path / "space name.txt"
+    target.write_text("old\n", encoding="utf-8")
+    _commit_all(tmp_path, "baseline")
+
+    patch_text = "\n".join(
+        [
+            'diff --git "a/space name.txt" "b/space name.txt"',
+            "--- a/space name.txt",
+            "+++ b/space name.txt",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+
+    result = ApplyPatchTool().invoke(
+        ToolCall(tool_name="apply_patch", arguments={"patch": patch_text}),
+        workspace=tmp_path,
+    )
+
+    assert result.status == "ok"
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert result.data["count"] == 1
+    assert result.data["changes"] == [{"path": "space name.txt", "status": "M"}]
+    assert result.content == "M space name.txt"
+
+
 def test_apply_patch_does_not_treat_mixed_mode_and_content_patch_as_mode_only(
     tmp_path: Path,
 ) -> None:
