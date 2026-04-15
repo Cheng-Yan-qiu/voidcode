@@ -203,11 +203,13 @@ def _single_agent_runtime(
     tmp_path: Path,
     *,
     mode: str = "ask",
+    skills_enabled: bool = False,
 ) -> tuple[RuntimeRequestFactory, RuntimeRunner]:
     runtime_request, runtime_class = _load_runtime_types()
     permission_module = importlib.import_module("voidcode.runtime.permission")
     config_module = importlib.import_module("voidcode.runtime.config")
     runtime_config = cast(Callable[..., object], config_module.RuntimeConfig)
+    runtime_skills_config = cast(Callable[..., object], config_module.RuntimeSkillsConfig)
     permission_policy = cast(Callable[..., object], permission_module.PermissionPolicy)
     policy = permission_policy(mode=mode)
     runtime = cast(
@@ -220,12 +222,29 @@ def _single_agent_runtime(
                     approval_mode=mode,
                     execution_engine="single_agent",
                     model="opencode/gpt-5.4",
+                    skills=runtime_skills_config(enabled=skills_enabled)
+                    if skills_enabled
+                    else None,
                 ),
                 permission_policy=policy,
             ),
         ),
     )
     return runtime_request, runtime
+
+
+def _write_demo_skill(
+    workspace: Path,
+    *,
+    description: str = "Demo skill",
+    content: str,
+) -> None:
+    skill_dir = workspace / ".voidcode" / "skills" / "demo"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: demo\ndescription: {description}\n---\n{content}\n",
+        encoding="utf-8",
+    )
 
 
 def test_single_agent_runtime_surfaces_provider_context_limit_failure_kind(tmp_path: Path) -> None:
@@ -1060,6 +1079,44 @@ def test_single_agent_runtime_executes_read_path_and_persists_config(tmp_path: P
     assert replay.output == result.output
 
 
+def test_single_agent_runtime_applies_skills_to_real_execution_output(tmp_path: Path) -> None:
+    sample_file = tmp_path / "sample.txt"
+    _ = sample_file.write_text("alpha\nbeta\n", encoding="utf-8")
+    _write_demo_skill(
+        tmp_path,
+        content="# Demo\nUse the demo skill during final response generation.",
+    )
+    runtime_request, runtime = _single_agent_runtime(
+        tmp_path,
+        mode="allow",
+        skills_enabled=True,
+    )
+
+    result = runtime.run(
+        runtime_request(
+            prompt="read sample.txt",
+            session_id="single-agent-skills",
+        )
+    )
+
+    assert result.session.status == "completed"
+    assert [event.event_type for event in result.events[:4]] == [
+        "runtime.request_received",
+        "runtime.skills_loaded",
+        "runtime.skills_applied",
+        "graph.loop_step",
+    ]
+    assert result.events[2].payload == {"skills": ["demo"], "count": 1}
+    assert result.output == "[applied skills]\n- demo: Demo skill\n\nalpha\nbeta\n"
+    assert result.session.metadata["applied_skill_payloads"] == [
+        {
+            "name": "demo",
+            "description": "Demo skill",
+            "content": "# Demo\nUse the demo skill during final response generation.",
+        }
+    ]
+
+
 def test_single_agent_runtime_requests_and_resumes_write_approval(tmp_path: Path) -> None:
     runtime_request, runtime = _single_agent_runtime(tmp_path, mode="ask")
 
@@ -1082,6 +1139,54 @@ def test_single_agent_runtime_requests_and_resumes_write_approval(tmp_path: Path
     assert resumed.session.status == "completed"
     assert resumed.output == "approved later"
     assert (tmp_path / "danger.txt").read_text(encoding="utf-8") == "approved later"
+
+
+def test_single_agent_runtime_resume_reuses_frozen_skill_snapshot(tmp_path: Path) -> None:
+    _write_demo_skill(
+        tmp_path,
+        description="Original skill",
+        content="# Demo\nOriginal instructions.",
+    )
+    runtime_request, runtime = _single_agent_runtime(
+        tmp_path,
+        mode="ask",
+        skills_enabled=True,
+    )
+
+    waiting = runtime.run(
+        runtime_request(
+            prompt="write danger.txt approved later",
+            session_id="single-agent-skill-resume",
+        )
+    )
+
+    assert waiting.session.status == "waiting"
+    assert [event.event_type for event in waiting.events[:3]] == [
+        "runtime.request_received",
+        "runtime.skills_loaded",
+        "runtime.skills_applied",
+    ]
+    approval_request_id = str(waiting.events[-1].payload["request_id"])
+
+    _write_demo_skill(
+        tmp_path,
+        description="Changed skill",
+        content="# Demo\nChanged instructions.",
+    )
+    _, resumed_runtime = _single_agent_runtime(
+        tmp_path,
+        mode="ask",
+        skills_enabled=True,
+    )
+
+    resumed = resumed_runtime.resume(
+        "single-agent-skill-resume",
+        approval_request_id=approval_request_id,
+        approval_decision="allow",
+    )
+
+    assert resumed.session.status == "completed"
+    assert resumed.output == "[applied skills]\n- demo: Original skill\n\napproved later"
 
 
 def test_runtime_uses_repo_local_config_to_allow_write_requests_without_explicit_policy(

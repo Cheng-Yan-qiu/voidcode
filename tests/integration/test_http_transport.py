@@ -266,6 +266,20 @@ def _parse_sse_payloads(response: _TransportResponse) -> list[dict[str, object]]
     return payloads
 
 
+def _write_demo_skill(
+    workspace: Path,
+    *,
+    description: str = "Demo skill",
+    content: str,
+) -> None:
+    skill_dir = workspace / ".voidcode" / "skills" / "demo"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: demo\ndescription: {description}\n---\n{content}\n",
+        encoding="utf-8",
+    )
+
+
 def _assert_runtime_session_metadata(
     metadata: object,
     *,
@@ -1127,6 +1141,72 @@ def test_transport_persists_streamed_run_for_session_listing_and_replay(tmp_path
         "runtime.tool_completed",
         "graph.loop_step",
         "graph.response_ready",
+    ]
+
+
+def test_transport_streams_skill_application_for_single_agent_runtime(tmp_path: Path) -> None:
+    sample_file = tmp_path / "sample.txt"
+    _ = sample_file.write_text("alpha\nbeta\n", encoding="utf-8")
+    _write_demo_skill(
+        tmp_path,
+        content="# Demo\nUse the demo skill during final response generation.",
+    )
+    (tmp_path / ".voidcode.json").write_text(
+        json.dumps(
+            {
+                "approval_mode": "allow",
+                "execution_engine": "single_agent",
+                "model": "opencode/gpt-5.4",
+                "skills": {"enabled": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    create_runtime_app = _load_transport_app_factory()
+    app = create_runtime_app(workspace=tmp_path)
+
+    response = _run_app(
+        app,
+        method="POST",
+        path="/api/runtime/run/stream",
+        body=json.dumps(
+            {
+                "prompt": "read sample.txt",
+                "session_id": "http-skill-session",
+            }
+        ).encode("utf-8"),
+    )
+    payloads = _parse_sse_payloads(response)
+    replay_response = _run_app(app, method="GET", path="/api/sessions/http-skill-session")
+    replay_payload = cast(dict[str, object], replay_response.json())
+
+    assert response.status == 200
+    assert [
+        cast(dict[str, object], payload["event"])["event_type"]
+        for payload in payloads
+        if payload["kind"] == "event"
+    ][:4] == [
+        "runtime.request_received",
+        "runtime.skills_loaded",
+        "runtime.skills_applied",
+        "graph.loop_step",
+    ]
+    assert cast(dict[str, object], cast(dict[str, object], payloads[2]["event"])["payload"]) == {
+        "skills": ["demo"],
+        "count": 1,
+    }
+    assert cast(str, cast(dict[str, object], payloads[-1])["output"]) == (
+        "[applied skills]\n- demo: Demo skill\n\nalpha\nbeta\n"
+    )
+    assert replay_response.status == 200
+    assert replay_payload["output"] == "[applied skills]\n- demo: Demo skill\n\nalpha\nbeta\n"
+    assert [
+        event["event_type"] for event in cast(list[dict[str, object]], replay_payload["events"])
+    ][:4] == [
+        "runtime.request_received",
+        "runtime.skills_loaded",
+        "runtime.skills_applied",
+        "graph.loop_step",
     ]
 
 
