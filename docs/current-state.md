@@ -39,7 +39,7 @@
 - [x] **动态工具注册**：运行时现在包括工具的类型化配置和发现基础设施，支持 `BuiltinToolProvider`。
 - [x] **Provider-backed execution engine 路径**：运行时已经具备 provider fallback、context window 管理、approval resume 连续性与可配置 step budget 的运行时治理基础。
 - [ ] **预定义 agent / multi-agent 边界**：未来将引入专门的 `src/voidcode/agent/` 边界来承载预定义 agent 的 prompt / hook / skill / MCP / tool / provider 配置；当前仓库尚未实现 multi-agent 执行语义。
-- [ ] **技能执行**：skill discovery 与 `runtime.skills_loaded` 事件已经完成，但运行时仍未执行技能逻辑，也尚未提供特定于技能的工具上下文。
+- [~] **技能执行**：运行时现在会在 `single_agent` 主执行路径中冻结并应用技能快照，发出 `runtime.skills_applied` 事件，并让技能对默认 provider-backed 输出产生可验证影响；后续仍可继续演进为更丰富的技能上下文与能力绑定语义。
 - [ ] **LSP preset/config 模块与 ACP 真实集成**：LSP 的只读 runtime-managed 基线已经存在，且 `src/voidcode/lsp/`、`src/voidcode/acp/` 等能力层边界目录已补齐文档，但仍缺少独立的 server preset/config 模块（extension/language 映射、root markers、默认 command、preset override merge）；ACP 也仍待真实传输与生命周期集成。
 - [ ] **长会话保留策略**：`#70` 已完成 waiting / terminal session 的内部 resume checkpoint groundwork，`#82` 也已经完成 retention / compaction / checkpoint invalidation 语义定义；当前 runtime 主线的直接后续工作转为 `#83`（corrupt / unreadable checkpoint fallback correctness）和 `#84`（cold-session archive / replay strategy）。
 - [~] **TUI 客户端**：已具备提示词输入和审批处理的初始实现，但会话管理、恢复/重放与规范冒烟验证仍未收口，当前优先级也已下调。
