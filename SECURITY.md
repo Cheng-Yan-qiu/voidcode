@@ -1,48 +1,46 @@
-# 安全政策
+# Security Policy
 
-我们非常重视 VoidCode 的安全性。如果你发现了任何潜在的安全漏洞，请不要通过公开的 Issue 提交，而是按照以下指南进行私下报告。
+We take the security of VoidCode seriously. If you discover a potential vulnerability, please report it privately rather than opening a public issue.
 
-## 支持的版本
+## Supported versions
 
-目前 VoidCode 处于 pre-MVP 开发阶段，我们仅对 `master` 分支上的最新代码提供安全更新支持。
+VoidCode is currently pre-MVP. At this stage, security fixes are only supported for the latest code on the `master` branch.
 
-| 版本 | 支持状态 |
+| Version | Supported |
 | :--- | :--- |
-| master | ✅ 支持 |
-| < MVP | ❌ 不支持 |
+| `master` | ✅ |
+| pre-MVP historical revisions | ❌ |
 
-## 报告安全漏洞
+## Reporting a vulnerability
 
-**请勿通过 GitHub Issue 提交安全性敏感的漏洞。**
+**Do not report security-sensitive issues through public GitHub issues.**
 
-我们推荐使用 GitHub 提供的私有安全漏洞报告功能。你可以通过以下链接启动报告流程：
+Please use GitHub's private vulnerability reporting flow:
 
-[报告安全漏洞](https://github.com/lei-jia-xing/voidcode/security/policy)
+[Report a vulnerability](https://github.com/lei-jia-xing/voidcode/security/policy)
 
-### 我们需要的详细信息
+When possible, include:
 
-为了帮助我们快速识别和修复问题，请在报告中包含以下信息：
+- the affected component (for example: runtime, CLI behavior, or a specific tool)
+- a description of the issue and its impact
+- reproduction steps, sample input, configuration, or proof-of-concept details
+- environment details such as OS, Python version, Bun version, and the affected commit hash
 
-- **受影响的组件**：例如运行时、特定工具或 CLI 行为。
-- **漏洞描述**：该漏洞的性质以及它可能造成的影响。
-- **复现步骤**：详细的步骤、代码片段或环境配置。
-- **环境信息**：操作系统、Python 版本、Bun 版本以及受影响的提交（commit）哈希。
+## What to expect from us
 
-## 我们的处理流程
+After receiving a report, we will:
 
-在收到安全漏洞报告后，我们将：
+1. acknowledge receipt and perform an initial review
+2. assess the severity and priority
+3. work on a private fix and validate it
+4. release the fix according to the project's maintenance cadence and publish a security advisory when appropriate
 
-1. 确认收到报告并进行初步审阅。
-2. 对漏洞进行评估并确定其优先级。
-3. 在私下修复漏洞并进行验证。
-4. 在修复完成后按项目维护节奏发布修复，并视情况发布安全公告。
+Please keep vulnerability details private until a fix has been prepared and disclosed responsibly.
 
-在漏洞修复并公开披露之前，请保持该漏洞信息的私密性。我们致力于在不影响用户安全的前提下，以负责任的方式处理每一个安全问题。
+## Acknowledgements
 
-## 鸣谢
-
-虽然我们目前没有正式的 Bug Bounty 计划，但我们衷心感谢每一位以负责任的方式发现并报告安全问题的贡献者。
+We do not currently run a formal bug bounty program, but we appreciate responsible disclosure and the help of security researchers and contributors.
 
 ---
 
-关于其他非安全性相关的贡献，请参阅我们的 [贡献指南](./CONTRIBUTING.md)。
+For non-security contributions, see [CONTRIBUTING.md](./CONTRIBUTING.md).

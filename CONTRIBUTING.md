@@ -1,51 +1,58 @@
-# 贡献指南
+# Contributing to VoidCode
 
-感谢你对 VoidCode 的贡献。本项目目前仍处于 pre-MVP 阶段，因此清晰的沟通、小的可评审变更以及可重复的本地验证比开发速度更重要。
+Thanks for contributing to VoidCode. The project is still pre-MVP, so clear communication, focused changes, and repeatable local verification matter more than speed.
 
-## 开发环境搭建
+## Development setup
 
-推荐的本地环境使用 uv 管理的 Python 环境。支持的 Python 版本为 3.13。
+The recommended local environment uses `uv` for Python and Bun for the frontend. Supported Python version: **3.13**.
 
 ```bash
 mise install
 uv sync --extra dev
+mise run frontend:install
 uv run voidcode --help
 ```
 
-可选但推荐的操作：
+Optional but recommended:
 
 ```bash
 uv run pre-commit install
 ```
 
-## 代码风格与质量门禁
+## Code quality and verification
 
-请参阅 [`docs/coding-standards.md`](./docs/coding-standards.md) 了解仓库的代码标准。
+See [`docs/coding-standards.md`](./docs/coding-standards.md) for repository coding standards.
 
-VoidCode 目前使用：
+Current toolchain:
 
 ### Python
-- **Ruff** 用于 lint 检查和代码格式化
-- **basedpyright** 用于静态类型检查
-- **pytest** 用于测试
+- **Ruff** for linting and formatting
+- **basedpyright** for static type checking
+- **pytest** for tests
 
-### 前端 (Bun)
-- **ESLint** 用于 lint 检查
-- **Prettier** 用于代码格式化
-- **TypeScript** 用于类型检查
+### Frontend
+- **Bun** as the package manager and task runner
+- **ESLint** for linting
+- **TypeScript** for type checking
+- **Vitest** for tests
 
-使用 `mise` 运行标准检查：
+Run the standard checks with `mise`:
 
 ```bash
 mise run lint
 mise run format
 mise run typecheck
 mise run test
+mise run build
+mise run frontend:lint
+mise run frontend:typecheck
+mise run frontend:test
 mise run check
+mise run ci
 mise run pre-commit
 ```
 
-需要时也可以直接使用 `uv` 命令：
+When needed, you can also invoke the Python tooling directly:
 
 ```bash
 uv run ruff check .
@@ -55,26 +62,43 @@ uv run pytest
 uv run pre-commit run --all-files
 ```
 
-## 测试预期
+## Testing expectations
 
-请在可行的情况下，为行为变更添加或更新测试。
+Please add or update tests when behavior changes.
 
-- 在开启 Pull Request 之前，请在本地运行 `pytest`。
-- 保持类型检查和 lint 检查无错误。
-- 如果你添加或更改了 CLI、运行时、图（graph）或工具的行为，请在存在测试覆盖面时为新行为包含测试覆盖。
+- Run the relevant local checks before opening a pull request.
+- Keep linting and type checking clean.
+- If you change CLI, runtime, graph, tool, or transport behavior, add test coverage where an existing test surface already exists.
+- For frontend changes, run the relevant Bun-based checks as well.
 
-## Pull Request 流程
+## Documentation language policy
 
-1. 从最新的分支开始开发。
-2. 保持变更聚焦，并在 PR 描述中解释原因。
-3. 在请求评审前，先在本地运行 lint 检查、类型检查、测试和 pre-commit。
-4. 当行为或工作流发生变化时，更新面向用户的文档。
-5. 等待评审，并通过后续提交来解决反馈意见。
+- Public-facing documents in the repository root should be written in English.
+- Internal design and planning documents under `docs/` may remain in Chinese.
+- If behavior or workflow changes, update the affected user-facing documentation.
 
-## 行为准则
+## Pull request process
 
-通过参与本项目，你同意遵守 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) 中的准则。
+1. Start from an up-to-date branch.
+2. Keep the change focused and explain the motivation in the PR description.
+3. Run the relevant lint, typecheck, test, and pre-commit checks locally before requesting review.
+4. Update documentation when behavior, workflow, or contributor expectations change.
+5. Address review feedback with follow-up commits.
 
-## 安全问题
+## Commit messages
 
-请不要为安全性敏感的报告开启公开 Issue。请遵循 [`SECURITY.md`](./SECURITY.md) 中的报告指南。
+Use Conventional Commits as described in [`docs/coding-standards.md`](./docs/coding-standards.md).
+
+Examples:
+
+- `feat(runtime): persist sessions in sqlite`
+- `fix(cli): handle unknown session ids`
+- `docs: refresh contribution guide`
+
+## Code of conduct
+
+By participating in this project, you agree to follow [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+
+## Security
+
+Do not open public issues for security-sensitive reports. Follow the reporting instructions in [`SECURITY.md`](./SECURITY.md).
