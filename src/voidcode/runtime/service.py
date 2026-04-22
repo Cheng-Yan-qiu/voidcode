@@ -1104,26 +1104,34 @@ class VoidCodeRuntime:
         preserved_continuity_state: RuntimeContinuityState | None = None,
     ) -> Iterator[RuntimeStreamChunk]:
         active_permission_policy = permission_policy or self._permission_policy
+        # Continuity memory reinjection boundary: allow a continuity state to be
+        # carried into the next iteration after a memory compaction (if any).
+        continuity_to_reinject: RuntimeContinuityState | None = preserved_continuity_state
         raw_provider_attempt = graph_request.metadata.get("provider_attempt", 0)
         provider_attempt = raw_provider_attempt if isinstance(raw_provider_attempt, int) else 0
-        active_preserved_continuity_state = preserved_continuity_state
         while True:
-            context_window = self._prepare_single_agent_context_window(
+            base_context = self._prepare_single_agent_context_window(
                 prompt=graph_request.prompt,
                 tool_results=tuple(tool_results),
                 session_metadata=session.metadata,
             )
-            if active_preserved_continuity_state is not None:
+            reinjected_continuity = continuity_to_reinject
+            # Apply reinjected continuity state if present, giving reinjection
+            # semantics after a compaction boundary.
+            if reinjected_continuity is not None:
                 context_window = RuntimeContextWindow(
-                    prompt=context_window.prompt,
-                    tool_results=context_window.tool_results,
-                    compacted=context_window.compacted,
-                    compaction_reason=context_window.compaction_reason,
-                    original_tool_result_count=context_window.original_tool_result_count,
-                    retained_tool_result_count=context_window.retained_tool_result_count,
-                    max_tool_result_count=context_window.max_tool_result_count,
-                    continuity_state=active_preserved_continuity_state,
+                    prompt=base_context.prompt,
+                    tool_results=base_context.tool_results,
+                    compacted=base_context.compacted,
+                    compaction_reason=base_context.compaction_reason,
+                    original_tool_result_count=base_context.original_tool_result_count,
+                    retained_tool_result_count=base_context.retained_tool_result_count,
+                    max_tool_result_count=base_context.max_tool_result_count,
+                    continuity_state=reinjected_continuity,
                 )
+            else:
+                context_window = base_context
+            continuity_to_reinject = None
             session = self._session_with_context_window_metadata(session, context_window)
             graph_request = GraphRunRequest(
                 session=session,
@@ -1134,7 +1142,7 @@ class VoidCodeRuntime:
                 context_window=context_window,
                 metadata=graph_request.metadata,
             )
-            if context_window.compacted and active_preserved_continuity_state is None:
+            if context_window.compacted and reinjected_continuity is None:
                 sequence += 1
                 yield RuntimeStreamChunk(
                     kind="event",
@@ -1561,7 +1569,6 @@ class VoidCodeRuntime:
                 raise RuntimeError(post_hook_outcome.failed_error)
 
             tool_results.append(tool_result)
-            active_preserved_continuity_state = None
 
     def _run_lifecycle_hooks(
         self,
@@ -2702,11 +2709,15 @@ class VoidCodeRuntime:
             return None
         if not isinstance(source, str):
             return None
+        version = continuity_payload.get("version")
+        if version is not None and (not isinstance(version, int) or isinstance(version, bool)):
+            return None
         return RuntimeContinuityState(
             summary_text=summary_text,
             dropped_tool_result_count=dropped,
             retained_tool_result_count=retained,
             source=source,
+            version=version if version is not None else 1,
         )
 
     @staticmethod
