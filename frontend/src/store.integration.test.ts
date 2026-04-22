@@ -374,4 +374,84 @@ describe('useAppStore integration flow', () => {
 
     expect(useAppStore.getState().runStatus).toBe('success');
   });
+
+  it('passes runtime metadata through runTask options', async () => {
+    const sessionId = 'session-meta';
+    const requestReceived = makeEvent(1, 'runtime.request_received', { prompt: 'analyze repo' }, 'runtime', sessionId);
+
+    async function* stream() {
+      yield makeStreamChunk(sessionId, 'completed', requestReceived);
+      yield makeStreamChunk(sessionId, 'completed', null, 'ok');
+    }
+
+    runtimeClientMocks.runStreamMock.mockReturnValue(stream());
+    runtimeClientMocks.listSessionsMock.mockResolvedValue([
+      makeStoredSessionSummary(sessionId, 'completed', 'analyze repo'),
+    ]);
+
+    await useAppStore.getState().runTask('analyze repo', {
+      metadata: {
+        skills: ['demo'],
+        max_steps: 5,
+        provider_stream: true,
+      },
+    });
+
+    expect(runtimeClientMocks.runStreamMock).toHaveBeenCalledWith({
+      prompt: 'analyze repo',
+      session_id: null,
+      metadata: {
+        skills: ['demo'],
+        max_steps: 5,
+        provider_stream: true,
+      },
+    });
+  });
+
+  it('respects explicit null sessionId and starts a fresh run', async () => {
+    const sessionId = 'current-session';
+    useAppStore.setState({ currentSessionId: sessionId });
+    const requestReceived = makeEvent(1, 'runtime.request_received', { prompt: 'new run' }, 'runtime', 'fresh-session');
+
+    async function* stream() {
+      yield makeStreamChunk('fresh-session', 'completed', requestReceived);
+      yield makeStreamChunk('fresh-session', 'completed', null, 'ok');
+    }
+
+    runtimeClientMocks.runStreamMock.mockReturnValue(stream());
+
+    await useAppStore.getState().runTask('new run', { sessionId: null });
+
+    expect(runtimeClientMocks.runStreamMock).toHaveBeenCalledWith({
+      prompt: 'new run',
+      session_id: null,
+      metadata: undefined,
+    });
+    expect(useAppStore.getState().currentSessionId).toBe('fresh-session');
+  });
+
+  it('uses explicit null sessionId to start a fresh run', async () => {
+    const sessionId = 'explicit-null-session';
+    const requestReceived = makeEvent(1, 'runtime.request_received', { prompt: 'start new' }, 'runtime', sessionId);
+
+    async function* stream() {
+      yield makeStreamChunk(sessionId, 'completed', requestReceived);
+      yield makeStreamChunk(sessionId, 'completed', null, 'ok');
+    }
+
+    runtimeClientMocks.runStreamMock.mockReturnValue(stream());
+    runtimeClientMocks.listSessionsMock.mockResolvedValue([]);
+
+    useAppStore.setState({ currentSessionId: 'previous-session' });
+
+    await useAppStore.getState().runTask('start new', {
+      sessionId: null,
+    });
+
+    expect(runtimeClientMocks.runStreamMock).toHaveBeenCalledWith({
+      prompt: 'start new',
+      session_id: null,
+      metadata: undefined,
+    });
+  });
 });
