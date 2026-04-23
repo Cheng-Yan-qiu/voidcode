@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
-from typing import Mapping
 
 _LEADER_DIR = Path(__file__).resolve().parent
 
