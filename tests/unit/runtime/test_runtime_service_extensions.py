@@ -66,6 +66,7 @@ from voidcode.runtime.mcp import (
     McpToolDescriptor,
 )
 from voidcode.runtime.permission import PermissionPolicy
+from voidcode.runtime.question import QuestionResponse
 from voidcode.runtime.service import (
     GraphRunRequest,
     RuntimeRequest,
@@ -167,6 +168,115 @@ class _ApprovalThenCaptureSkillGraph:
             return _StubStep(
                 tool_call=ToolCall(
                     tool_name="write_file", arguments={"path": "alpha.txt", "content": "1"}
+                )
+            )
+        return _StubStep(output="done", is_finished=True)
+
+
+class _QuestionThenDoneGraph:
+    def step(
+        self,
+        request: GraphRunRequest,
+        tool_results: tuple[object, ...],
+        *,
+        session: SessionState,
+    ) -> _StubStep:
+        _ = request, session
+        if not tool_results:
+            return _StubStep(
+                tool_call=ToolCall(
+                    tool_name="question",
+                    arguments={
+                        "questions": [
+                            {
+                                "question": "Which runtime path should we use?",
+                                "header": "Runtime path",
+                                "options": [
+                                    {"label": "Reuse existing", "description": ""},
+                                    {"label": "Add new path", "description": ""},
+                                ],
+                                "multiple": False,
+                            }
+                        ]
+                    },
+                )
+            )
+        return _StubStep(output="done", is_finished=True)
+
+
+class _QuestionThenApprovalGraph:
+    def step(
+        self,
+        request: GraphRunRequest,
+        tool_results: tuple[object, ...],
+        *,
+        session: SessionState,
+    ) -> _StubStep:
+        _ = request, session
+        if not tool_results:
+            return _StubStep(
+                tool_call=ToolCall(
+                    tool_name="question",
+                    arguments={
+                        "questions": [
+                            {
+                                "question": "Which runtime path should we use?",
+                                "header": "Runtime path",
+                                "options": [
+                                    {"label": "Reuse existing", "description": ""},
+                                    {"label": "Add new path", "description": ""},
+                                ],
+                                "multiple": False,
+                            }
+                        ]
+                    },
+                )
+            )
+        if len(tool_results) == 1:
+            return _StubStep(
+                tool_call=ToolCall(
+                    tool_name="write_file",
+                    arguments={"path": "alpha.txt", "content": "1"},
+                )
+            )
+        return _StubStep(output="done", is_finished=True)
+
+
+class _TwoQuestionThenDoneGraph:
+    def step(
+        self,
+        request: GraphRunRequest,
+        tool_results: tuple[object, ...],
+        *,
+        session: SessionState,
+    ) -> _StubStep:
+        _ = request, session
+        if not tool_results:
+            return _StubStep(
+                tool_call=ToolCall(
+                    tool_name="question",
+                    arguments={
+                        "questions": [
+                            {
+                                "question": "Which runtime path should we use?",
+                                "header": "Runtime path",
+                                "options": [
+                                    {"label": "Reuse existing", "description": ""},
+                                    {"label": "Add new path", "description": ""},
+                                ],
+                                "multiple": False,
+                            },
+                            {
+                                "question": "Which review mode should we use?",
+                                "header": "Review mode",
+                                "options": [
+                                    {"label": "Fast", "description": ""},
+                                    {"label": "Thorough", "description": ""},
+                                ],
+                                "multiple": False,
+                            },
+                        ]
+                    },
                 )
             )
         return _StubStep(output="done", is_finished=True)
@@ -380,6 +490,30 @@ class _BackgroundTaskSuccessGraph:
         return _StubStep(output=request.prompt, is_finished=True)
 
 
+class _TaskToolGraph:
+    def step(
+        self,
+        request: GraphRunRequest,
+        tool_results: tuple[object, ...],
+        *,
+        session: SessionState,
+    ) -> _StubStep:
+        _ = request, session
+        if not tool_results:
+            return _StubStep(
+                tool_call=ToolCall(
+                    tool_name="task",
+                    arguments={
+                        "prompt": "delegated child prompt",
+                        "run_in_background": True,
+                        "load_skills": ["demo"],
+                        "category": "quick",
+                    },
+                )
+            )
+        return _StubStep(output="delegation started", is_finished=True)
+
+
 class _BackgroundTaskFailureGraph:
     def step(
         self,
@@ -545,6 +679,25 @@ def test_runtime_background_task_executes_through_existing_runtime_path(tmp_path
     assert resumed.session.metadata["background_run"] is True
     assert resumed.output == "background hello"
     assert completed == loaded
+
+
+def test_runtime_task_tool_starts_background_task_with_skill_metadata(tmp_path: Path) -> None:
+    skill_dir = tmp_path / ".voidcode" / "skills" / "demo"
+    _write_demo_skill(skill_dir, content="# Demo\nUse delegated skill.")
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_TaskToolGraph(),
+        config=RuntimeConfig(skills=RuntimeSkillsConfig(enabled=True)),
+    )
+
+    response = runtime.run(RuntimeRequest(prompt="delegate this", session_id="leader-session"))
+    tasks = runtime.list_background_tasks_by_parent_session(parent_session_id="leader-session")
+    assert response.output == "delegation started"
+    assert len(tasks) == 1
+    task = runtime.load_background_task(tasks[0].task.id)
+    assert task.request.parent_session_id == "leader-session"
+    assert task.request.metadata == {"skills": ["demo"]}
+    assert task.request.prompt.startswith("Delegated runtime task.")
 
 
 def test_runtime_background_task_worker_uses_local_cli_session_when_no_session_id_and_allocate_session_id_is_false(  # noqa: E501
@@ -5829,6 +5982,166 @@ def test_runtime_notifications_track_approval_blocked_and_completion(tmp_path: P
     assert [notification.id for notification in duplicate_check] == [
         notifications[0].id,
         notifications[1].id,
+    ]
+
+
+def test_runtime_notifications_track_question_blocked_and_completion(tmp_path: Path) -> None:
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_QuestionThenDoneGraph(),
+        config=RuntimeConfig(approval_mode="ask"),
+        permission_policy=PermissionPolicy(mode="ask"),
+    )
+
+    waiting = runtime.run(RuntimeRequest(prompt="go", session_id="question-notify-session"))
+    question_request_id = str(waiting.events[-1].payload["request_id"])
+    waiting_notifications = runtime.list_notifications()
+
+    assert len(waiting_notifications) == 1
+    assert waiting_notifications[0].kind == "question_blocked"
+    assert waiting_notifications[0].status == "unread"
+    assert waiting_notifications[0].session.id == "question-notify-session"
+
+    resumed = runtime.answer_question(
+        session_id="question-notify-session",
+        question_request_id=question_request_id,
+        responses=(QuestionResponse(header="Runtime path", answers=("Reuse existing",)),),
+    )
+    notifications = runtime.list_notifications()
+
+    assert resumed.session.status == "completed"
+    assert len(notifications) == 2
+    assert [notification.kind for notification in notifications] == [
+        "completion",
+        "question_blocked",
+    ]
+    assert notifications[0].status == "unread"
+    assert notifications[1].status == "acknowledged"
+
+
+def test_answer_question_emits_single_question_tool_completed_event(tmp_path: Path) -> None:
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_QuestionThenDoneGraph(),
+        config=RuntimeConfig(approval_mode="ask"),
+        permission_policy=PermissionPolicy(mode="ask"),
+    )
+
+    waiting = runtime.run(RuntimeRequest(prompt="go", session_id="question-single-tool-event"))
+    question_request_id = str(waiting.events[-1].payload["request_id"])
+
+    resumed = runtime.answer_question(
+        session_id="question-single-tool-event",
+        question_request_id=question_request_id,
+        responses=(QuestionResponse(header="Runtime path", answers=("Reuse existing",)),),
+    )
+
+    question_tool_events = [
+        event
+        for event in resumed.events
+        if event.event_type == "runtime.tool_completed" and event.payload.get("tool") == "question"
+    ]
+
+    assert len(question_tool_events) == 1
+    assert len({event.sequence for event in question_tool_events}) == 1
+
+
+def test_answered_question_does_not_override_later_pending_approval(tmp_path: Path) -> None:
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_QuestionThenApprovalGraph(),
+        config=RuntimeConfig(approval_mode="ask"),
+        permission_policy=PermissionPolicy(mode="ask"),
+    )
+
+    waiting = runtime.run(RuntimeRequest(prompt="go", session_id="question-then-approval"))
+    question_request_id = str(waiting.events[-1].payload["request_id"])
+
+    resumed = runtime.answer_question(
+        session_id="question-then-approval",
+        question_request_id=question_request_id,
+        responses=(QuestionResponse(header="Runtime path", answers=("Reuse existing",)),),
+    )
+
+    assert resumed.session.status == "waiting"
+    assert resumed.events[-1].event_type == "runtime.approval_requested"
+    session_store = _private_attr(runtime, "_session_store")
+
+    assert (
+        session_store.load_pending_question(
+            workspace=tmp_path,
+            session_id="question-then-approval",
+        )
+        is None
+    )
+    pending_approval = session_store.load_pending_approval(
+        workspace=tmp_path,
+        session_id="question-then-approval",
+    )
+    assert pending_approval is not None
+    assert pending_approval.tool_name == "write_file"
+
+
+def test_answer_question_rejects_duplicate_headers(tmp_path: Path) -> None:
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_TwoQuestionThenDoneGraph(),
+        config=RuntimeConfig(approval_mode="ask"),
+        permission_policy=PermissionPolicy(mode="ask"),
+    )
+
+    waiting = runtime.run(RuntimeRequest(prompt="go", session_id="question-duplicate-header"))
+    question_request_id = str(waiting.events[-1].payload["request_id"])
+
+    with pytest.raises(ValueError, match="duplicate question header"):
+        runtime.answer_question(
+            session_id="question-duplicate-header",
+            question_request_id=question_request_id,
+            responses=(
+                QuestionResponse(header="Runtime path", answers=("Reuse existing",)),
+                QuestionResponse(header="Runtime path", answers=("Reuse existing",)),
+            ),
+        )
+
+
+def test_answer_question_normalizes_multi_question_response_order(tmp_path: Path) -> None:
+    runtime = VoidCodeRuntime(
+        workspace=tmp_path,
+        graph=_TwoQuestionThenDoneGraph(),
+        config=RuntimeConfig(approval_mode="ask"),
+        permission_policy=PermissionPolicy(mode="ask"),
+    )
+
+    waiting = runtime.run(RuntimeRequest(prompt="go", session_id="question-response-order"))
+    question_request_id = str(waiting.events[-1].payload["request_id"])
+
+    resumed = runtime.answer_question(
+        session_id="question-response-order",
+        question_request_id=question_request_id,
+        responses=(
+            QuestionResponse(header="Review mode", answers=("Fast",)),
+            QuestionResponse(header="Runtime path", answers=("Reuse existing",)),
+        ),
+    )
+
+    assert resumed.session.status == "completed"
+
+    answered_event = next(
+        event for event in resumed.events if event.event_type == "runtime.question_answered"
+    )
+    tool_completed_event = next(
+        event
+        for event in resumed.events
+        if event.event_type == "runtime.tool_completed" and event.payload.get("tool") == "question"
+    )
+
+    assert answered_event.payload["responses"] == [
+        {"header": "Runtime path", "answers": ["Reuse existing"]},
+        {"header": "Review mode", "answers": ["Fast"]},
+    ]
+    assert tool_completed_event.payload["responses"] == [
+        {"header": "Runtime path", "answers": ["Reuse existing"]},
+        {"header": "Review mode", "answers": ["Fast"]},
     ]
 
 
