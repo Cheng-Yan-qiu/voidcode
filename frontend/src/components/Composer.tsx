@@ -58,6 +58,9 @@ export function Composer({
         canonicalModelReference(group.provider.name, model) === selectedModel,
     ),
   );
+  const selectableAgentPresets = useMemo(() => {
+    return (agentPresets ?? []).filter((agent) => agent.selectable !== false);
+  }, [agentPresets]);
 
   const selectedAgentLabel = useMemo(() => {
     return (
@@ -163,7 +166,7 @@ export function Composer({
             </button>
           </div>
 
-          {agentPresets && agentPresets.length > 0 && (
+          {selectableAgentPresets.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-800/60 bg-slate-900/30 px-3 py-1.5 text-xs">
               <div className="relative" ref={agentMenuRef}>
                 <button
@@ -183,7 +186,7 @@ export function Composer({
 
                 {showAgentMenu && (
                   <div className="absolute bottom-full left-0 z-20 mb-2 min-w-[180px] rounded border border-slate-700 bg-[#0c0c0e] py-1 shadow-xl">
-                    {agentPresets.map((agent) => {
+                    {selectableAgentPresets.map((agent) => {
                       const active = agent.id === (agentPreset ?? "leader");
                       return (
                         <button

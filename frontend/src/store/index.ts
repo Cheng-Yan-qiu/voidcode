@@ -373,15 +373,18 @@ export const useAppStore = create<AppState>()(
         set({ agentsStatus: "loading", agentsError: null });
         try {
           const agentPresets = await RuntimeClient.listAgents();
+          const selectableAgentPresets = agentPresets.filter(
+            (agent) => agent.selectable !== false,
+          );
           set({
             agentPresets,
             agentsStatus: "success",
             agentsError: null,
-            agentPreset: agentPresets.some(
+            agentPreset: selectableAgentPresets.some(
               (agent) => agent.id === get().agentPreset,
             )
               ? get().agentPreset
-              : ((agentPresets[0]?.id ?? "leader") as "leader"),
+              : (selectableAgentPresets[0]?.id ?? "leader"),
           });
         } catch (err) {
           set({
